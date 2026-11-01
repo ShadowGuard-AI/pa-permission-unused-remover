@@ -126,7 +126,9 @@ def analyze_code(directory, exclude_spec=None):
                     for node in ast.walk(tree):
                         if isinstance(node, ast.Call):
                             func = node.func
+                            # I match on the call name alone, whatever object it hangs off and whatever arguments it carries. A chmod to a safe mode, a method on an unrelated class that shares the name, and a local helper called chmod all land in the same bucket, because a static name scan cannot tell them apart and I would rather over report here.
                             if (isinstance(func, ast.Attribute) and func.attr == 'chmod') or (isinstance(func, ast.Name) and func.id == 'chmod'):
+                                # One line is appended per call, with no line number and no deduplication. A file with five chmod calls appears five times identically in the detail list, so the count in the summary table is a count of calls, not of files with a problem.
                                 analysis_results["potential_issues"].append(f"Potential chmod usage in: {filepath}")
 
                 except Exception as e:
@@ -154,11 +156,13 @@ def check_file_permissions(directory, exclude_spec=None):
             if exclude_spec and exclude_spec.match_file(filepath):
                 continue
 
+            # Despite the name, this counter includes directories: the entries list above deliberately mixes both, so files checked in the summary means entries examined. Comparing it against the files analyzed count from the code pass is comparing two different units.
             permission_results["files_checked"] += 1
             try:
                 mode = os.stat(filepath).st_mode
 
                 # Flag any world writable file or directory, not only exact 777.
+                # os.stat follows symlinks, so a link is judged by its target's type and mode while the path I print is the link's. The printed mode is also masked down to the low nine bits, so a setuid world writable file is displayed without the bit that makes it the most dangerous entry in the list.
                 if (stat.S_ISREG(mode) or stat.S_ISDIR(mode)) and (mode & 0o002):
                     kind = "Directory" if stat.S_ISDIR(mode) else "File"
                     permission_results["insecure_permissions"].append(f"{filepath}: {kind} permissions are world writable ({format(mode & 0o777, '03o')})")
@@ -179,6 +183,7 @@ def report_unused_permissions(permission_results):
     else:
         print("No insecure permissions found.")
 
+# The table prints before the nothing checked test below runs. A run over an empty tree shows a tidy all zero table first and only then exits 1, so anyone capturing output sees what looks like a completed report for a scan that examined nothing.
 def display_results(analysis_results, permission_results):
     """
     Displays the analysis and permission check results using the rich library.
